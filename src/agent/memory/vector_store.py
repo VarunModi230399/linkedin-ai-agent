@@ -9,7 +9,7 @@ from qdrant_client.models import (
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 COLLECTION_NAME = "knowledge_base"
-VECTOR_SIZE = 1536  # OpenAI text-embedding-3-large dimension
+VECTOR_SIZE = 3072  # OpenAI text-embedding-3-large dimension
 
 
 def get_qdrant_client() -> QdrantClient:

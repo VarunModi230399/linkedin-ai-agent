@@ -20,6 +20,7 @@ dependencies = [
     "langfuse>=2.0",
     "structlog>=24.0",
     "greenlet>=3.5.0",
+    "python-dotenv>=1.2.2",
 ]
 
 [project.optional-dependencies]

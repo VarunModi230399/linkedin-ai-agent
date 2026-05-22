@@ -156,3 +156,86 @@ No explanations, no extra text, just the numbered list."""
             "ideas": [],
             "error": error_msg,
         }
+
+
+# ── Node 3: select_idea ───────────────────────────
+def select_idea_node(state: AgentState) -> AgentState:
+    """
+    Picks the single best idea from the generated list.
+
+    Uses GPT-4o-mini to evaluate all 5 ideas and select
+    the one most likely to get high engagement on LinkedIn
+    from an AI engineer audience.
+
+    Reads from state:
+        - ideas: list of 5 ideas from generate_ideas
+        - pillar: content category for context
+
+    Updates state with:
+        - selected_idea: the single chosen idea string
+    """
+    print("🎯 select_idea: picking the best idea...")
+
+    # Safety check — if no ideas, return error
+    if not state.get("ideas"):
+        return {
+            **state,
+            "selected_idea": "",
+            "error": "select_idea: no ideas in state to select from",
+        }
+
+    # Format ideas as numbered list for the prompt
+    ideas_text = "\n".join(f"{i + 1}. {idea}" for i, idea in enumerate(state["ideas"]))
+
+    prompt = f"""You are an expert LinkedIn content strategist for AI engineers.
+
+Here are 5 LinkedIn post ideas for the category: {state["pillar"]}
+
+{ideas_text}
+
+Your audience: software engineers, ML engineers, tech leads, AI consultants.
+Goal: maximum engagement (likes, comments, shares) from this technical audience.
+
+Evaluate each idea on:
+- Hook strength (does it make you stop scrolling?)
+- Specificity (concrete vs vague)
+- Relevance to AI engineers in 2026
+- Novelty (fresh angle vs overdone topic)
+
+Return ONLY the text of the single best idea.
+No explanation, no number, no extra text.
+Just the idea itself."""
+
+    try:
+        response = llm.invoke(prompt)
+        selected = response.content.strip()
+
+        # Clean up whatever the model added around the idea
+        # Remove leading numbers like "1." or "1)"
+        if selected and selected[0].isdigit():
+            selected = selected.split(".", 1)[-1].strip()
+            selected = selected.split(")", 1)[-1].strip()
+
+        # Remove surrounding quotes the model sometimes adds
+        selected = selected.strip('"').strip("'").strip()
+
+        print(f"  ✅ Selected idea: {selected}")
+
+        return {
+            **state,
+            "selected_idea": selected,
+            "error": "",
+        }
+
+    except Exception as e:
+        # Fallback — just pick the first idea if LLM fails
+        fallback = state["ideas"][0]
+        error_msg = f"select_idea LLM failed, using fallback: {str(e)}"
+        print(f"  ⚠️  {error_msg}")
+        print(f"  📌 Fallback idea: {fallback}")
+
+        return {
+            **state,
+            "selected_idea": fallback,
+            "error": error_msg,
+        }

@@ -211,10 +211,13 @@ Just the idea itself."""
         selected = response.content.strip()
 
         # Clean up whatever the model added around the idea
-        # Remove leading numbers like "1." or "1)"
-        if selected and selected[0].isdigit():
-            selected = selected.split(".", 1)[-1].strip()
-            selected = selected.split(")", 1)[-1].strip()
+        # Only strip if it matches "1." or "2)" pattern — not if number is part of idea
+        import re
+
+        # Matches: "1. text" or "1) text" — list prefixes only
+        list_prefix_pattern = re.compile(r"^\d+[\.\)]\s+")
+        if list_prefix_pattern.match(selected):
+            selected = list_prefix_pattern.sub("", selected).strip()
 
         # Remove surrounding quotes the model sometimes adds
         selected = selected.strip('"').strip("'").strip()

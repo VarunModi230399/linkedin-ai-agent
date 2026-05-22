@@ -67,3 +67,92 @@ def pick_pillar_node(state: AgentState) -> AgentState:
         "ideas": [],  # reset ideas for new run
         "error": "",  # clear any previous errors
     }
+
+
+# ── Node 2: generate_ideas ────────────────────────
+def generate_ideas_node(state: AgentState) -> AgentState:
+    """
+    Uses GPT-4o-mini to generate 5 post ideas for the chosen pillar.
+
+    Reads from state:
+        - pillar: the content category chosen by pick_pillar
+
+    Updates state with:
+        - ideas: list of 5 post ideas as strings
+    """
+    print(f"💡 generate_ideas: generating ideas for pillar '{state['pillar']}'...")
+
+    # Pillar descriptions help the LLM understand context
+    pillar_context = {
+        "ai_tools": "showcasing or reviewing AI tools, APIs, and developer productivity",
+        "case_study": "real-world AI implementation stories, results, and lessons learned",
+        "opinion": "strong opinions and takes on AI trends, industry direction, and best practices",
+        "tutorial": "step-by-step technical guides for building AI systems",
+    }
+
+    context = pillar_context.get(state["pillar"], "AI and machine learning topics")
+
+    # The prompt — this is what gets sent to GPT-4o-mini
+    prompt = f"""You are an AI engineer with 5 years of experience building production AI systems.
+You write LinkedIn posts that get high engagement from a technical audience of developers,
+ML engineers, and tech leads.
+
+Generate exactly 5 LinkedIn post ideas for the category: {state["pillar"]}
+Category focus: {context}
+
+Requirements for each idea:
+- Specific and concrete (not vague)
+- Relevant to AI engineers and developers in 2026
+- Has a clear angle (contrarian, how-to, lessons learned, or data-driven)
+- Would make someone stop scrolling
+- Maximum 15 words per idea
+
+Return ONLY a numbered list like this:
+1. idea one here
+2. idea two here
+3. idea three here
+4. idea four here
+5. idea five here
+
+No explanations, no extra text, just the numbered list."""
+
+    try:
+        response = llm.invoke(prompt)
+        raw_text = response.content
+
+        # Parse the numbered list into a clean Python list
+        ideas = []
+        for line in raw_text.strip().split("\n"):
+            line = line.strip()
+            if line and line[0].isdigit():
+                # Remove the number and period/dot at the start
+                # "1. My idea here" → "My idea here"
+                idea = line.split(".", 1)[-1].strip()
+                if idea:
+                    ideas.append(idea)
+
+        # Safety check — if parsing failed, use raw lines
+        if not ideas:
+            ideas = [l.strip() for l in raw_text.split("\n") if l.strip()]
+
+        # Keep only first 5
+        ideas = ideas[:5]
+
+        print(f"  ✅ Generated {len(ideas)} ideas")
+        for i, idea in enumerate(ideas, 1):
+            print(f"     {i}. {idea}")
+
+        return {
+            **state,
+            "ideas": ideas,
+            "error": "",
+        }
+
+    except Exception as e:
+        error_msg = f"generate_ideas failed: {str(e)}"
+        print(f"  ❌ {error_msg}")
+        return {
+            **state,
+            "ideas": [],
+            "error": error_msg,
+        }

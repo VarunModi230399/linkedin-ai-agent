@@ -71,6 +71,11 @@ class AgentState(TypedDict):
     # Used by the refine node if post is sent back.
     # Set by: human_approval node
 
+    # Add this field to AgentState — it tracks the approval decision
+    rejection_count: int
+    # How many times this post has been rejected by human
+    # Used to prevent infinite rejection loops
+
     # ── Phase 7: Publishing ────────────────────────
     scheduled_for: str
     # ISO datetime string for when to publish.

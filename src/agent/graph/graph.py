@@ -85,7 +85,7 @@ def route_after_approval(state: AgentState) -> str:
 
 
 # ── Build the graph ───────────────────────────────
-def build_agent_graph() -> StateGraph:
+def build_agent_graph(checkpointer=None) -> StateGraph:
     """
     Builds and compiles the full LangGraph agent.
     Returns the compiled graph ready to run.
@@ -146,14 +146,11 @@ def build_agent_graph() -> StateGraph:
     # ── Compile the graph ─────────────────────────
     # interrupt_before pauses execution at human_approval
     # so you can review before anything publishes
+    # ── Compile the graph ─────────────────────────────
     graph = builder.compile(
+        checkpointer=checkpointer,
         interrupt_before=["human_approval"],
     )
 
     print("✅ LangGraph agent compiled successfully")
     return graph
-
-
-# ── Module-level graph instance ───────────────────
-# Import this from other files to run the agent
-agent_graph = build_agent_graph()

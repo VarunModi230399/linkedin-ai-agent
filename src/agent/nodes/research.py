@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 
+from src.agent.observability.langfuse import trace_llm_call
 from src.agent.core.settings import OPENAI_API_KEY, OPENAI_MODEL_FAST
 from src.agent.graph.state import AgentState
 from src.agent.memory.vector_store import search_knowledge_base
@@ -24,10 +25,6 @@ llm = ChatOpenAI(
 )
 
 # ── Relevance threshold ───────────────────────────
-# 0.55 = relevant content only
-# Agent will retry with new query if score is below this
-# As knowledge base grows with more articles,
-# scores will naturally improve above this threshold
 MIN_SCORE = 0.55
 MAX_ATTEMPTS = 3
 
@@ -50,6 +47,14 @@ Focus on the core technical topic, not the post angle.
 Return ONLY the search query, nothing else."""
 
     response = llm.invoke(prompt)
+    trace_llm_call(
+        trace_name="agent_run",
+        node_name="research_query_reformulation",
+        prompt=prompt,
+        response_content=response.content,
+        model=OPENAI_MODEL_FAST,
+        metadata={"attempt": attempt, "idea": idea[:50]},
+    )
     return response.content.strip()
 
 
@@ -83,7 +88,8 @@ def research_node(state: AgentState) -> AgentState:
         - selected_idea: the idea chosen by select_idea
 
     Updates state with:
-        - research_results: list of relevant text chunks
+        - research_results: list of result dicts with
+          text, title, url, author, published_date, publication
     """
     print("🔍 research: searching knowledge base...")
     print(f"   Idea: {state['selected_idea'][:60]}...")
@@ -94,37 +100,32 @@ def research_node(state: AgentState) -> AgentState:
     for attempt in range(MAX_ATTEMPTS):
         print(f"  Attempt {attempt + 1}/{MAX_ATTEMPTS}...")
 
-        # Generate search query
         query = generate_search_query(state["selected_idea"], attempt)
         print(f"  Query: '{query}'")
 
-        # Search Qdrant
         results = search_knowledge_base(query, top_k=5)
 
         if not results:
             print("  No results found — retrying...")
             continue
 
-        # Show top 3 scores
         for r in results[:3]:
             print(f"  Score: {r['score']:.3f} | {r['title'][:50]}")
 
-        # Evaluate quality
         if evaluate_results(results):
-            research_results = [f"Source: {r['title']}\n{r['text']}" for r in results]
+            # Store full dicts — preserves citation metadata for draft node
+            research_results = results
             found_good_results = True
             print(f"  ✅ Found {len(research_results)} relevant chunks")
             break
         else:
             print("  Results not relevant enough — reformulating query...")
 
-    # If all attempts failed use best available results anyway
-    # Better to have some context than none at all
     if not found_good_results:
         print("  ⚠️  All attempts below threshold — using best available results")
         print("  💡 Tip: add more content to knowledge base to improve scores")
-        last_results = search_knowledge_base(state["selected_idea"], top_k=3)
-        research_results = [f"Source: {r['title']}\n{r['text']}" for r in last_results]
+        # Store full dicts — preserves citation metadata for draft node
+        research_results = search_knowledge_base(state["selected_idea"], top_k=3)
 
     print(f"  ✅ Research complete — {len(research_results)} chunks ready")
 

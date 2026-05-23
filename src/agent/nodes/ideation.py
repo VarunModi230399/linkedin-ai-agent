@@ -14,6 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 
+from src.agent.observability.langfuse import trace_llm_call
 from src.agent.core.settings import OPENAI_API_KEY, OPENAI_MODEL_FAST
 from src.agent.graph.state import AgentState
 from langchain_openai import ChatOpenAI
@@ -118,6 +119,14 @@ No explanations, no extra text, just the numbered list."""
 
     try:
         response = llm.invoke(prompt)
+        trace_llm_call(
+            trace_name="agent_run",
+            node_name="generate_ideas",
+            prompt=prompt,
+            response_content=response.content,
+            model=OPENAI_MODEL_FAST,
+            metadata={"pillar": state.get("pillar", "")},
+        )
         raw_text = response.content
 
         # Parse the numbered list into a clean Python list
@@ -208,6 +217,14 @@ Just the idea itself."""
 
     try:
         response = llm.invoke(prompt)
+        trace_llm_call(
+            trace_name="agent_run",
+            node_name="select_idea",
+            prompt=prompt,
+            response_content=response.content,
+            model=OPENAI_MODEL_FAST,
+            metadata={"pillar": state.get("pillar", "")},
+        )
         selected = response.content.strip()
 
         # Clean up whatever the model added around the idea

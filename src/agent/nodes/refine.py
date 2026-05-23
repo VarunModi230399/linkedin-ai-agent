@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 
+from src.agent.observability.langfuse import trace_llm_call
 from src.agent.core.settings import OPENAI_API_KEY, OPENAI_MODEL
 from src.agent.graph.state import AgentState
 from langchain_openai import ChatOpenAI
@@ -119,6 +120,17 @@ No explanation, no preamble, just the post."""
 
     try:
         response = llm.invoke(prompt)
+        trace_llm_call(
+            trace_name="agent_run",
+            node_name="refine",
+            prompt=prompt,
+            response_content=response.content,
+            model=OPENAI_MODEL,
+            metadata={
+                "refinement_count": state.get("refinement_count", 0),
+                "critique_score": state.get("critique_score", 0),
+            },
+        )
         improved_draft = response.content.strip()
         word_count = len(improved_draft.split())
 

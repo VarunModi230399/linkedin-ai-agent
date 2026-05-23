@@ -29,7 +29,7 @@ class AgentState(TypedDict):
     # Set by: select_idea node
 
     # ── Phase 3: Research ──────────────────────────
-    research_results: list[str]
+    research_results: list[dict]
     # Relevant chunks retrieved from Qdrant knowledge base.
     # These ground the post in real, current information.
     # Set by: research node

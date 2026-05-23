@@ -34,9 +34,28 @@ services:
       - agent-net
     restart: unless-stopped
 
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: linkedin_agent_langfuse
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://app:changeme@postgres:5432/langfuse
+      NEXTAUTH_SECRET: changeme_langfuse_secret_min_32_chars_long
+      NEXTAUTH_URL: http://localhost:3000
+      SALT: changeme_langfuse_salt_min_32_chars_long_xx
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
+    depends_on:
+      - postgres
+    networks:
+      - agent-net
+    restart: unless-stopped
+
 volumes:
   pg_data:
   qdrant_data:
+  langfuse_data:
 
 networks:
   agent-net:

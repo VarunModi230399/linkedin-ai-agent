@@ -1,31 +1,26 @@
-# TODO: implement src/agent/nodes/drafting.py
 # src/agent/nodes/drafting.py
 #
 # The draft node writes the actual LinkedIn post.
-# It uses GPT-4o (not mini) because post quality
-# directly impacts engagement and client acquisition.
+# Uses GPT-4o for quality — this is what people read.
 
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 
+from src.agent.observability.langfuse import trace_llm_call
 from src.agent.core.settings import OPENAI_API_KEY, OPENAI_MODEL
 from src.agent.graph.state import AgentState
 from langchain_openai import ChatOpenAI
 
 # ── LLM Setup ─────────────────────────────────────
-# GPT-4o for drafting — quality matters here
-# This is what the audience actually reads
 llm = ChatOpenAI(
     model=OPENAI_MODEL,
     api_key=OPENAI_API_KEY,
-    temperature=0.8,  # higher creativity for engaging posts
+    temperature=0.8,
 )
 
 # ── Few-shot examples ─────────────────────────────
-# These are examples of high-performing LinkedIn posts
-# from AI engineers. The model learns style from these.
 FEW_SHOT_EXAMPLES = """
 EXAMPLE 1 (ai_tools pillar — 8,200 impressions):
 I built an AI agent that writes LinkedIn posts automatically.
@@ -105,52 +100,53 @@ Save this for your next RAG project.
 """
 
 
-# ── Node 5: draft ─────────────────────────────────
 def draft_node(state: AgentState) -> AgentState:
     """
     Writes a complete LinkedIn post using GPT-4o.
 
-    Uses the selected idea and research results to
-    produce a specific, engaging, high-quality post.
-
     Reads from state:
-        - pillar: content category
-        - selected_idea: the chosen post idea
-        - research_results: relevant chunks from Qdrant
-        - human_feedback: feedback if sent back from approval
-        - draft: previous draft if this is a refinement
+        - pillar, selected_idea, research_results
+        - human_feedback (if rewrite)
 
     Updates state with:
-        - draft: the complete LinkedIn post text
+        - draft: the complete post text
     """
     print("✍️  draft: writing LinkedIn post...")
     print(f"   Idea: {state['selected_idea'][:60]}...")
 
-    # Format research with Option-B citation metadata
+    # ── Format research results ───────────────────
+    # research_results are dicts from search_knowledge_base
+    # Each has: text, title, url, author, published_date, publication
     research_text = ""
     if state.get("research_results"):
         formatted_sources = []
         for r in state["research_results"][:3]:
-            # Build citation line
-            citation_parts = []
-            if r.get("publication"):
-                citation_parts.append(r["publication"])
-            if r.get("author"):
-                citation_parts.append(f"by {r['author']}")
-            if r.get("published_date"):
-                citation_parts.append(r["published_date"])
+            if isinstance(r, dict):
+                # Build citation from metadata
+                citation_parts = []
+                if r.get("publication"):
+                    citation_parts.append(r["publication"])
+                if r.get("author"):
+                    citation_parts.append(f"by {r['author']}")
+                if r.get("published_date"):
+                    citation_parts.append(r["published_date"])
 
-            citation = " — ".join(citation_parts) if citation_parts else "AI Research"
-            url = r.get("url", "")
+                citation = (
+                    " — ".join(citation_parts) if citation_parts else "AI Research"
+                )
+                url = r.get("url", "")
+                text = r.get("text", "")
 
-            formatted_sources.append(
-                f"[Source: {citation}]\nURL: {url}\n{r.get('text', '')}"
-            )
+                formatted_sources.append(f"[Source: {citation}]\nURL: {url}\n{text}")
+            else:
+                # Fallback — research_result is a plain string
+                formatted_sources.append(str(r))
+
         research_text = "\n\n---\n\n".join(formatted_sources)
     else:
         research_text = "No specific research available — use your general knowledge."
 
-    # Include human feedback if this is a rewrite
+    # ── Include human feedback if rewrite ────────
     feedback_section = ""
     if state.get("human_feedback"):
         feedback_section = f"""
@@ -161,6 +157,7 @@ Previous draft that was rejected:
 {state.get("draft", "")}
 """
 
+    # ── Build prompt ──────────────────────────────
     prompt = f"""You are an AI engineer with 5 years of production experience.
 You write LinkedIn posts that get high engagement from technical audiences.
 
@@ -186,22 +183,34 @@ STRICT REQUIREMENTS:
 7. Total length: 150-250 words maximum
 8. NO corporate speak, NO buzzword soup
 9. Sound like a real engineer sharing real experience
-10. CITATION RULE: When using information from the research sources,
-    reference the publication naturally like:
-    'According to a recent arXiv paper...' or
-    'As reported by Dev.to this week...'
+10. CITATION RULE: When using information from research sources,
+    reference naturally: 'According to a recent arXiv paper...'
+    or 'As reported by Dev.to this week...'
     End with: 'Source links in comments 👇'
-    This builds credibility and drives comment engagement.
 
 Write ONLY the post. No title, no explanation, no preamble.
 Start directly with the first line of the post."""
 
     try:
         response = llm.invoke(prompt)
-        draft = response.content.strip()
 
-        # Count words for logging
+        # ── Trace to Langfuse ─────────────────────
+        trace_llm_call(
+            trace_name="agent_run",
+            node_name="draft",
+            prompt=prompt,
+            response_content=response.content,
+            model=OPENAI_MODEL,
+            metadata={
+                "pillar": state.get("pillar", ""),
+                "selected_idea": state.get("selected_idea", "")[:50],
+                "refinement_count": state.get("refinement_count", 0),
+            },
+        )
+
+        draft = response.content.strip()
         word_count = len(draft.split())
+
         print(f"  ✅ Draft written — {word_count} words")
         print()
         print("  --- DRAFT PREVIEW ---")

@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 
+from src.agent.observability.langfuse import trace_llm_call
 from src.agent.core.settings import OPENAI_API_KEY, OPENAI_MODEL
 from src.agent.graph.state import AgentState
 from langchain_openai import ChatOpenAI
@@ -137,6 +138,17 @@ No other text. Just the JSON."""
 
     try:
         response = llm.invoke(prompt)
+        trace_llm_call(
+            trace_name="agent_run",
+            node_name="critique",
+            prompt=prompt,
+            response_content=response.content,
+            model=OPENAI_MODEL,
+            metadata={
+                "pillar": state.get("pillar", ""),
+                "draft_length": len(state.get("draft", "")),
+            },
+        )
         scores = parse_scores(response.content)
 
         # Calculate average score

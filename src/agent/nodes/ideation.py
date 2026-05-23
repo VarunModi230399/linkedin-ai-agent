@@ -210,6 +210,7 @@ Evaluate each idea on:
 - Specificity (concrete vs vague)
 - Relevance to AI engineers in 2026
 - Novelty (fresh angle vs overdone topic)
+- Never use placeholder text like [Tool Name] or [API Name] — use real specific tool names or keep it general
 
 Return ONLY the text of the single best idea.
 No explanation, no number, no extra text.

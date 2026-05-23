@@ -1,11 +1,4 @@
-# TODO: implement src/agent/graph/graph.py
 # src/agent/graph/graph.py
-#
-# This is the central file that defines the entire agent.
-# It wires all 11 nodes together into a LangGraph graph
-# with conditional edges, the human approval interrupt,
-# and PostgreSQL checkpointing for crash recovery.
-
 import sys
 from pathlib import Path
 
@@ -14,7 +7,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 from langgraph.graph import StateGraph, END
 from src.agent.graph.state import AgentState
 
-# ── Import all nodes ──────────────────────────────
 from src.agent.nodes.ideation import (
     pick_pillar_node,
     generate_ideas_node,
@@ -30,28 +22,13 @@ from src.agent.nodes.publish import publish_node
 from src.agent.nodes.track import track_node
 
 
-# ── Conditional edge functions ────────────────────
-# These functions look at the current state and return
-# the name of the next node to run.
-
-
 def route_after_critique(state: AgentState) -> str:
-    """
-    After critique — decide whether to refine or approve.
-
-    Rules:
-    - Score >= 7.0 AND refinements < 2 → human_approval
-    - Score < 7.0 AND refinements < 2  → refine
-    - Refinements >= 2                 → force human_approval
-      (prevents infinite refine loops)
-    """
     score = state.get("critique_score", 0.0)
     refinements = state.get("refinement_count", 0)
 
     if refinements >= 2:
         print("  ↪️  Max refinements reached — forcing to human_approval")
         return "human_approval"
-
     if score >= 7.0:
         print(f"  ↪️  Score {score} >= 7.0 — routing to human_approval")
         return "human_approval"
@@ -61,21 +38,12 @@ def route_after_critique(state: AgentState) -> str:
 
 
 def route_after_approval(state: AgentState) -> str:
-    """
-    After human approval — decide whether to publish or redraft.
-
-    Rules:
-    - Approved → schedule
-    - Rejected AND rejection_count < 2 → draft (full rewrite)
-    - Rejected AND rejection_count >= 2 → END (give up gracefully)
-    """
     approved = state.get("approved", False)
     rejection_count = state.get("rejection_count", 0)
 
     if approved:
         print("  ↪️  Approved — routing to schedule")
         return "schedule"
-
     if rejection_count >= 2:
         print("  ↪️  Rejected twice — ending gracefully")
         return END
@@ -84,13 +52,11 @@ def route_after_approval(state: AgentState) -> str:
     return "draft"
 
 
-# ── Build the graph ───────────────────────────────
 def build_agent_graph(checkpointer=None) -> StateGraph:
     """
     Builds and compiles the full LangGraph agent.
     Returns the compiled graph ready to run.
     """
-    # Create the graph with our state definition
     builder = StateGraph(AgentState)
 
     # ── Add all nodes ─────────────────────────────
@@ -106,23 +72,21 @@ def build_agent_graph(checkpointer=None) -> StateGraph:
     builder.add_node("publish", publish_node)
     builder.add_node("track", track_node)
 
-    # ── Set entry point ───────────────────────────
-    # This is the first node that runs
+    # ── Entry point ───────────────────────────────
     builder.set_entry_point("pick_pillar")
 
-    # ── Add normal edges (always go to next node) ─
+    # ── Normal edges ──────────────────────────────
     builder.add_edge("pick_pillar", "generate_ideas")
     builder.add_edge("generate_ideas", "select_idea")
     builder.add_edge("select_idea", "research")
     builder.add_edge("research", "draft")
     builder.add_edge("draft", "critique")
-    builder.add_edge("refine", "critique")  # loop back
+    builder.add_edge("refine", "critique")
     builder.add_edge("schedule", "publish")
     builder.add_edge("publish", "track")
     builder.add_edge("track", END)
 
-    # ── Add conditional edges ─────────────────────
-    # After critique: refine OR human_approval
+    # ── Conditional edges ─────────────────────────
     builder.add_conditional_edges(
         "critique",
         route_after_critique,
@@ -131,8 +95,6 @@ def build_agent_graph(checkpointer=None) -> StateGraph:
             "human_approval": "human_approval",
         },
     )
-
-    # After human_approval: schedule OR draft OR END
     builder.add_conditional_edges(
         "human_approval",
         route_after_approval,
@@ -143,10 +105,15 @@ def build_agent_graph(checkpointer=None) -> StateGraph:
         },
     )
 
-    # ── Compile the graph ─────────────────────────
-    # interrupt_before pauses execution at human_approval
-    # so you can review before anything publishes
-    # ── Compile the graph ─────────────────────────────
+    # ── Checkpointer ──────────────────────────────
+    if checkpointer is None:
+        from langgraph.checkpoint.memory import MemorySaver
+
+        checkpointer = MemorySaver()
+        print("  ⚠️  Using MemorySaver — state lost on restart")
+    else:
+        print("  ✅ Using provided checkpointer")
+
     graph = builder.compile(
         checkpointer=checkpointer,
         interrupt_before=["human_approval"],

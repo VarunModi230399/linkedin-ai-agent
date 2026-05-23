@@ -1,9 +1,4 @@
 # scripts/run_agent.py
-#
-# Runs the full LinkedIn AI agent end to end.
-# Submits post to FastAPI UI for approval.
-# Polls API for human decision then resumes.
-
 import sys
 from pathlib import Path
 
@@ -11,7 +6,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import time
 import httpx
-from langgraph.checkpoint.memory import MemorySaver
 from src.agent.graph.graph import build_agent_graph
 
 
@@ -34,11 +28,30 @@ def get_initial_state() -> dict:
     }
 
 
+def get_checkpointer():
+    try:
+        from langgraph.checkpoint.postgres import PostgresSaver
+        from src.agent.core.settings import DATABASE_URL
+        import psycopg
+
+        sync_url = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+
+        # autocommit=True required for CREATE INDEX CONCURRENTLY
+        conn = psycopg.connect(sync_url, autocommit=True)
+        checkpointer = PostgresSaver(conn)
+        checkpointer.setup()
+        print("✅ Using PostgreSQL checkpointer — state survives restarts")
+        return checkpointer
+
+    except Exception as e:
+        print(f"⚠️  PostgreSQL checkpointer failed: {e}")
+        print("   Falling back to MemorySaver")
+        from langgraph.checkpoint.memory import MemorySaver
+
+        return MemorySaver()
+
+
 def submit_post_to_ui(state_values: dict) -> str:
-    """
-    Submits the generated post to the FastAPI approval UI.
-    Returns the post_id for polling.
-    """
     try:
         response = httpx.post(
             "http://localhost:8000/posts",
@@ -51,22 +64,16 @@ def submit_post_to_ui(state_values: dict) -> str:
             },
             timeout=10.0,
         )
-        data = response.json()
-        return data["post_id"]
+        return response.json()["post_id"]
     except Exception as e:
         print(f"❌ Failed to submit post to UI: {e}")
         print(
-            "   Make sure the API is running: uv run uvicorn src.api.app:app --reload --port 8000"
+            "   Make sure API is running: uv run uvicorn src.api.app:app --reload --port 8000"
         )
         raise
 
 
 def poll_for_decision(post_id: str, poll_interval: int = 5) -> dict:
-    """
-    Polls the API every poll_interval seconds until
-    the human makes a decision (approve/reject/edit).
-    Returns the decision dict.
-    """
     print()
     print("=" * 60)
     print("⏸  Waiting for your approval decision...")
@@ -94,7 +101,6 @@ def poll_for_decision(post_id: str, poll_interval: int = 5) -> dict:
                     "approved": True,
                     "human_feedback": data.get("reviewer_notes", ""),
                 }
-
             elif status == "approved_with_edit":
                 print()
                 print("✏️  Post approved with edits via browser!")
@@ -103,7 +109,6 @@ def poll_for_decision(post_id: str, poll_interval: int = 5) -> dict:
                     "draft": data.get("content", ""),
                     "human_feedback": "Human edited via browser UI",
                 }
-
             elif status == "rejected":
                 print()
                 print("❌ Post rejected via browser!")
@@ -112,9 +117,7 @@ def poll_for_decision(post_id: str, poll_interval: int = 5) -> dict:
                     "human_feedback": data.get("reviewer_notes", "no feedback"),
                     "rejection_count": 1,
                 }
-
             else:
-                # Still pending — show waiting indicator
                 dots = (dots + 1) % 4
                 print(
                     f"\r   Waiting{'.' * dots}{'  ' * (3 - dots)}", end="", flush=True
@@ -133,15 +136,13 @@ def run_agent():
     print("=" * 60)
     print()
 
-    # Build graph with MemorySaver checkpointer
-    checkpointer = MemorySaver()
+    # ── Checkpointer ──────────────────────────────
+    checkpointer = get_checkpointer()
     graph = build_agent_graph(checkpointer=checkpointer)
     config = {"configurable": {"thread_id": "run_001"}}
-
-    # Get fresh initial state
     state = get_initial_state()
 
-    # ── Phase 1: Run until human_approval interrupt ──
+    # ── Phase 1: Run until human_approval ─────────
     print("📍 Running pipeline until human approval...")
     print()
 
@@ -152,7 +153,6 @@ def run_agent():
         print(f"❌ Pipeline error: {e}")
         raise
 
-    # Get state at interrupt point
     current = graph.get_state(config=config)
     state_values = current.values
 
@@ -160,16 +160,16 @@ def run_agent():
         print(f"❌ Agent stopped with error: {state_values['error']}")
         return
 
-    # ── Submit post to UI for approval ──────────────
+    # ── Submit to UI ───────────────────────────────
     print()
     print("📬 Submitting post to approval UI...")
     post_id = submit_post_to_ui(state_values)
     print(f"   ✅ Post submitted — ID: {post_id[:8]}...")
 
-    # ── Poll for human decision ──────────────────────
+    # ── Poll for decision ──────────────────────────
     decision = poll_for_decision(post_id)
 
-    # ── Phase 2: Resume with decision ───────────────
+    # ── Phase 2: Resume ────────────────────────────
     print()
     print("📍 Resuming agent with your decision...")
     print()
@@ -183,7 +183,7 @@ def run_agent():
         print(f"❌ Resume error: {e}")
         raise
 
-    # Final summary
+    # ── Final summary ──────────────────────────────
     final = graph.get_state(config=config).values
 
     print()

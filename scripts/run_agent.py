@@ -1,20 +1,21 @@
 # scripts/run_agent.py
 #
 # Runs the full LinkedIn AI agent end to end.
-# Uses MemorySaver for now — switches to PostgreSQL in Phase 8.
+# Submits post to FastAPI UI for approval.
+# Polls API for human decision then resumes.
 
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import time
+import httpx
 from langgraph.checkpoint.memory import MemorySaver
 from src.agent.graph.graph import build_agent_graph
-from src.agent.graph.state import AgentState
 
 
 def get_initial_state() -> dict:
-    """Returns a clean initial state for a new agent run."""
     return {
         "pillar": "",
         "ideas": [],
@@ -33,96 +34,96 @@ def get_initial_state() -> dict:
     }
 
 
-def get_human_decision(state_values: dict) -> dict:
+def submit_post_to_ui(state_values: dict) -> str:
     """
-    Shows the draft to the human and gets their decision.
-    Returns the state update dict based on their choice.
+    Submits the generated post to the FastAPI approval UI.
+    Returns the post_id for polling.
+    """
+    try:
+        response = httpx.post(
+            "http://localhost:8000/posts",
+            json={
+                "draft": state_values.get("draft", ""),
+                "pillar": state_values.get("pillar", ""),
+                "selected_idea": state_values.get("selected_idea", ""),
+                "critique": state_values.get("critique", {}),
+                "critique_score": state_values.get("critique_score", 0.0),
+            },
+            timeout=10.0,
+        )
+        data = response.json()
+        return data["post_id"]
+    except Exception as e:
+        print(f"❌ Failed to submit post to UI: {e}")
+        print(
+            "   Make sure the API is running: uv run uvicorn src.api.app:app --reload --port 8000"
+        )
+        raise
+
+
+def poll_for_decision(post_id: str, poll_interval: int = 5) -> dict:
+    """
+    Polls the API every poll_interval seconds until
+    the human makes a decision (approve/reject/edit).
+    Returns the decision dict.
     """
     print()
     print("=" * 60)
-    print("⏸  AGENT PAUSED — Human approval required")
+    print("⏸  Waiting for your approval decision...")
     print("=" * 60)
     print()
-
-    # Show critique scores
-    critique = state_values.get("critique", {})
-    print("📊 Critique Scores:")
-    print(f"   Hook:    {critique.get('hook', '?')}/10")
-    print(f"   Value:   {critique.get('value', '?')}/10")
-    print(f"   Voice:   {critique.get('voice', '?')}/10")
-    print(f"   CTA:     {critique.get('cta', '?')}/10")
-    print(f"   Length:  {critique.get('length', '?')}/10")
-    print(f"   Overall: {state_values.get('critique_score', 0)}/10")
+    print("   Open your browser at: http://localhost:8000")
+    print(f"   Post ID: {post_id[:8]}...")
+    print(f"   Polling every {poll_interval} seconds...")
     print()
 
-    # Show the draft
-    print("📝 POST TO REVIEW:")
-    print("-" * 60)
-    print(state_values.get("draft", ""))
-    print("-" * 60)
-    print()
-    print("What would you like to do?")
-    print("  [a] Approve — publish as is")
-    print("  [e] Edit    — approve with your changes")
-    print("  [r] Reject  — send back for rewrite")
-    print()
-
+    dots = 0
     while True:
-        decision = input("Your decision (a/e/r): ").strip().lower()
+        try:
+            response = httpx.get(
+                f"http://localhost:8000/posts/{post_id}/status",
+                timeout=10.0,
+            )
+            data = response.json()
+            status = data.get("status", "pending_approval")
 
-        if decision == "a":
-            print("✅ Post approved!")
-            return {
-                "approved": True,
-                "human_feedback": "",
-            }
-
-        elif decision == "e":
-            print()
-            print("Paste your edited version.")
-            print("Press Enter twice when done.")
-            print()
-            lines = []
-            empty_count = 0
-            while empty_count < 1:
-                line = input()
-                if line == "":
-                    empty_count += 1
-                else:
-                    empty_count = 0
-                    lines.append(line)
-
-            edited = "\n".join(lines).strip()
-            if edited:
-                print("✅ Approved with your edits!")
+            if status == "approved":
+                print()
+                print("✅ Post approved via browser!")
                 return {
                     "approved": True,
-                    "draft": edited,
-                    "human_feedback": (
-                        f"Human edited. "
-                        f"Original score: {state_values.get('critique_score')}"
-                    ),
+                    "human_feedback": data.get("reviewer_notes", ""),
                 }
+
+            elif status == "approved_with_edit":
+                print()
+                print("✏️  Post approved with edits via browser!")
+                return {
+                    "approved": True,
+                    "draft": data.get("content", ""),
+                    "human_feedback": "Human edited via browser UI",
+                }
+
+            elif status == "rejected":
+                print()
+                print("❌ Post rejected via browser!")
+                return {
+                    "approved": False,
+                    "human_feedback": data.get("reviewer_notes", "no feedback"),
+                    "rejection_count": 1,
+                }
+
             else:
-                print("No edits detected — approving as is")
-                return {
-                    "approved": True,
-                    "human_feedback": "",
-                }
+                # Still pending — show waiting indicator
+                dots = (dots + 1) % 4
+                print(
+                    f"\r   Waiting{'.' * dots}{'  ' * (3 - dots)}", end="", flush=True
+                )
+                time.sleep(poll_interval)
 
-        elif decision == "r":
-            print()
-            feedback = input("What should be changed? ").strip()
-            rejection_count = state_values.get("rejection_count", 0) + 1
-            print(f"❌ Rejected (#{rejection_count}) — sending back for rewrite")
-            return {
-                "approved": False,
-                "human_feedback": feedback,
-                "rejection_count": rejection_count,
-            }
-
-        else:
-            print("Please enter 'a', 'e', or 'r'")
+        except Exception as e:
+            print(f"\n   ⚠️  Polling error: {e} — retrying...")
+            time.sleep(poll_interval)
 
 
 def run_agent():
@@ -133,12 +134,8 @@ def run_agent():
     print()
 
     # Build graph with MemorySaver checkpointer
-    # Switches to PostgreSQL in Phase 8
     checkpointer = MemorySaver()
     graph = build_agent_graph(checkpointer=checkpointer)
-
-    # Thread ID identifies this specific run
-    # In production each run gets a unique UUID
     config = {"configurable": {"thread_id": "run_001"}}
 
     # Get fresh initial state
@@ -150,44 +147,43 @@ def run_agent():
 
     try:
         for chunk in graph.stream(state, config=config):
-            # Each chunk contains the node output
-            # Nodes print their own progress — nothing needed here
             pass
-
     except Exception as e:
         print(f"❌ Pipeline error: {e}")
         raise
 
-    # ── Get state at the interrupt point ────────────
+    # Get state at interrupt point
     current = graph.get_state(config=config)
     state_values = current.values
 
-    # Check if graph ended early due to error
     if state_values.get("error"):
         print(f"❌ Agent stopped with error: {state_values['error']}")
         return
 
-    # ── Human decision ───────────────────────────────
-    update = get_human_decision(state_values)
-
-    # ── Phase 2: Resume after human decision ────────
+    # ── Submit post to UI for approval ──────────────
     print()
-    print("📍 Resuming agent after your decision...")
+    print("📬 Submitting post to approval UI...")
+    post_id = submit_post_to_ui(state_values)
+    print(f"   ✅ Post submitted — ID: {post_id[:8]}...")
+
+    # ── Poll for human decision ──────────────────────
+    decision = poll_for_decision(post_id)
+
+    # ── Phase 2: Resume with decision ───────────────
+    print()
+    print("📍 Resuming agent with your decision...")
     print()
 
-    # Push human decision into the graph state
-    graph.update_state(config=config, values=update)
+    graph.update_state(config=config, values=decision)
 
-    # Resume — passing None resumes from checkpoint
     try:
         for chunk in graph.stream(None, config=config):
             pass
-
     except Exception as e:
         print(f"❌ Resume error: {e}")
         raise
 
-    # ── Final summary ────────────────────────────────
+    # Final summary
     final = graph.get_state(config=config).values
 
     print()
@@ -198,7 +194,6 @@ def run_agent():
     print(f"  Pillar:         {final.get('pillar')}")
     print(f"  Selected idea:  {final.get('selected_idea', '')[:55]}")
     print(f"  Critique score: {final.get('critique_score')}/10")
-    print(f"  Refinements:    {final.get('refinement_count')}")
     print(f"  Approved:       {final.get('approved')}")
     print(f"  Scheduled for:  {final.get('scheduled_for')}")
     print(f"  LinkedIn URN:   {final.get('linkedin_urn')}")

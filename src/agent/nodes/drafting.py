@@ -126,10 +126,27 @@ def draft_node(state: AgentState) -> AgentState:
     print("✍️  draft: writing LinkedIn post...")
     print(f"   Idea: {state['selected_idea'][:60]}...")
 
-    # Format research results for the prompt
+    # Format research with Option-B citation metadata
     research_text = ""
     if state.get("research_results"):
-        research_text = "\n\n".join(state["research_results"][:3])
+        formatted_sources = []
+        for r in state["research_results"][:3]:
+            # Build citation line
+            citation_parts = []
+            if r.get("publication"):
+                citation_parts.append(r["publication"])
+            if r.get("author"):
+                citation_parts.append(f"by {r['author']}")
+            if r.get("published_date"):
+                citation_parts.append(r["published_date"])
+
+            citation = " — ".join(citation_parts) if citation_parts else "AI Research"
+            url = r.get("url", "")
+
+            formatted_sources.append(
+                f"[Source: {citation}]\nURL: {url}\n{r.get('text', '')}"
+            )
+        research_text = "\n\n---\n\n".join(formatted_sources)
     else:
         research_text = "No specific research available — use your general knowledge."
 
@@ -169,6 +186,12 @@ STRICT REQUIREMENTS:
 7. Total length: 150-250 words maximum
 8. NO corporate speak, NO buzzword soup
 9. Sound like a real engineer sharing real experience
+10. CITATION RULE: When using information from the research sources,
+    reference the publication naturally like:
+    'According to a recent arXiv paper...' or
+    'As reported by Dev.to this week...'
+    End with: 'Source links in comments 👇'
+    This builds credibility and drives comment engagement.
 
 Write ONLY the post. No title, no explanation, no preamble.
 Start directly with the first line of the post."""

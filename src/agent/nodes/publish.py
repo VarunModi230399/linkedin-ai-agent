@@ -9,6 +9,7 @@
 
 import sys
 from pathlib import Path
+from src.agent.observability.db_writer import update_post_status
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 
@@ -133,6 +134,16 @@ def publish_node(state: AgentState) -> AgentState:
         fake_urn = "urn:li:share:DRY_RUN_7234567890123456789"
         print(f"  ✅ Simulated post URN: {fake_urn}")
 
+        # ← ADD HERE — inside DRY_RUN block
+        if state.get("post_id"):
+            update_post_status(
+                post_id=state["post_id"],
+                status="published",
+                linkedin_urn=fake_urn,
+                scheduled_for=state.get("scheduled_for", ""),
+            )
+            print("  📝 Post status updated in PostgreSQL")
+
         return {
             **state,
             "linkedin_urn": fake_urn,
@@ -169,6 +180,17 @@ def publish_node(state: AgentState) -> AgentState:
         if result["success"]:
             print("  ✅ Post published successfully!")
             print(f"  URN: {result['post_urn']}")
+
+            # Save to PostgreSQL — LIVE
+            if state.get("post_id"):
+                update_post_status(
+                    post_id=state["post_id"],
+                    status="published",
+                    linkedin_urn=result["post_urn"],
+                    scheduled_for=state.get("scheduled_for", ""),
+                )
+                print("  📝 Post status updated in PostgreSQL")
+
             return {
                 **state,
                 "linkedin_urn": result["post_urn"],

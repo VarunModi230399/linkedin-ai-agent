@@ -93,3 +93,9 @@ class AgentState(TypedDict):
     # Stores error message if any node fails.
     # Empty string means no error.
     # Set by: any node that catches an exception
+
+    # Add this field to AgentState
+    post_id: str
+    # PostgreSQL ID for this post
+    # Set by: draft node
+    # Used by: critique, approval, publish nodes

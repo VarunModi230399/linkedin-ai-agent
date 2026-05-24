@@ -5,6 +5,8 @@
 
 import sys
 from pathlib import Path
+import uuid
+from src.agent.observability.db_writer import save_post
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 
@@ -209,6 +211,23 @@ Start directly with the first line of the post."""
         )
 
         draft = response.content.strip()
+        # Save post to PostgreSQL
+        post_id = str(uuid.uuid4())
+        save_post(
+            post_id=post_id,
+            content=draft,
+            pillar=state.get("pillar", ""),
+            selected_idea=state.get("selected_idea", ""),
+            status="draft",
+        )
+        print(f"  📝 Post saved to PostgreSQL")
+
+        return {
+            **state,
+            "draft": draft,
+            "post_id": post_id,  # carry ID through state
+            "error": "",
+        }
         word_count = len(draft.split())
 
         print(f"  ✅ Draft written — {word_count} words")

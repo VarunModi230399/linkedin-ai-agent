@@ -1,6 +1,11 @@
 # scripts/run_agent.py
 import sys
 from pathlib import Path
+import uuid
+from src.agent.observability.db_writer import (
+    save_agent_run,
+    complete_agent_run,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -14,6 +19,7 @@ def get_initial_state() -> dict:
         "pillar": "",
         "ideas": [],
         "selected_idea": "",
+        "post_id": "",
         "research_results": [],
         "draft": "",
         "critique": {},
@@ -136,6 +142,13 @@ def run_agent():
     print("=" * 60)
     print()
 
+    # Generate unique run ID for this session
+    run_id = str(uuid.uuid4())
+
+    # Save run start to PostgreSQL
+    save_agent_run(run_id)
+    print(f"  📝 Run ID: {run_id[:8]}... saved to PostgreSQL")
+
     # ── Checkpointer ──────────────────────────────
     checkpointer = get_checkpointer()
     graph = build_agent_graph(checkpointer=checkpointer)
@@ -185,6 +198,14 @@ def run_agent():
 
     # ── Final summary ──────────────────────────────
     final = graph.get_state(config=config).values
+
+    # Mark run as complete in PostgreSQL
+    complete_agent_run(
+        run_id=run_id,
+        status="completed" if not final.get("error") else "failed",
+        error=final.get("error", ""),
+    )
+    print("  📝 Run saved to PostgreSQL")
 
     print()
     print("=" * 60)

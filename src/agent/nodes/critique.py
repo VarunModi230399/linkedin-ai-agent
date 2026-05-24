@@ -7,6 +7,7 @@
 
 import sys
 from pathlib import Path
+from src.agent.observability.db_writer import save_critique
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 
@@ -160,6 +161,15 @@ No other text. Just the JSON."""
             scores.get("length", 5),
         ]
         avg_score = round(sum(score_values) / len(score_values), 2)
+        # Save critique to PostgreSQL
+        if state.get("post_id"):
+            save_critique(
+                post_id=state["post_id"],
+                score_json=scores,
+                feedback=scores.get("feedback", ""),
+                draft_version=state.get("refinement_count", 0) + 1,
+            )
+            print(f"  📝 Critique saved to PostgreSQL")
 
         print("  Scores:")
         print(f"    Hook:   {scores.get('hook')}/10")

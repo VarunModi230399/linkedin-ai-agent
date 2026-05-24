@@ -1,4 +1,6 @@
 services:
+
+  # ── Infrastructure ────────────────────────────────
   postgres:
     image: postgres:16-alpine
     container_name: linkedin_agent_postgres
@@ -13,6 +15,11 @@ services:
     networks:
       - agent-net
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d linkedin_agent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
@@ -22,6 +29,11 @@ services:
     networks:
       - agent-net
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -47,7 +59,77 @@ services:
       TELEMETRY_ENABLED: "false"
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    networks:
+      - agent-net
+    restart: unless-stopped
+
+  # ── Application ───────────────────────────────────
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: linkedin_agent_api
+    command: uvicorn src.api.app:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://app:changeme@postgres:5432/linkedin_agent
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
+      LANGFUSE_HOST: http://langfuse:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - agent-net
+    restart: unless-stopped
+    volumes:
+      - ../src:/app/src  # hot reload for development
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: linkedin_agent_worker
+    command: celery -A src.worker.celery_app worker --loglevel=info
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://app:changeme@postgres:5432/linkedin_agent
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
+      LANGFUSE_HOST: http://langfuse:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - agent-net
+    restart: unless-stopped
+
+  beat:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: linkedin_agent_beat
+    command: celery -A src.worker.beat_schedule beat --loglevel=info
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://app:changeme@postgres:5432/linkedin_agent
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
+      LANGFUSE_HOST: http://langfuse:3000
+    depends_on:
+      redis:
+        condition: service_healthy
     networks:
       - agent-net
     restart: unless-stopped
